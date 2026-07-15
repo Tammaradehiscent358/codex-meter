@@ -64,10 +64,12 @@ public struct RateLimitSnapshot: Equatable, Sendable, Codable {
 public struct RateLimitPayload: Equatable, Sendable, Codable {
     public let snapshot: RateLimitSnapshot
     public let fetchedAt: Date
+    public let availableResetCredits: Int?
 
-    public init(snapshot: RateLimitSnapshot, fetchedAt: Date) {
+    public init(snapshot: RateLimitSnapshot, fetchedAt: Date, availableResetCredits: Int? = nil) {
         self.snapshot = snapshot
         self.fetchedAt = fetchedAt
+        self.availableResetCredits = availableResetCredits
     }
 }
 
@@ -83,7 +85,13 @@ public enum RateLimitParser {
         guard let result = root["result"] as? [String: Any],
               let rawSnapshot = selectSnapshot(from: result) else { return nil }
 
-        return RateLimitPayload(snapshot: parseSnapshot(rawSnapshot), fetchedAt: now)
+        let resetCredits = (result["rateLimitResetCredits"] as? [String: Any])
+            .flatMap { integer($0["availableCount"]) }
+        return RateLimitPayload(
+            snapshot: parseSnapshot(rawSnapshot),
+            fetchedAt: now,
+            availableResetCredits: resetCredits.map { max(0, $0) }
+        )
     }
 
     public static func parseNotification(_ data: Data, now: Date = Date()) throws -> RateLimitPayload? {

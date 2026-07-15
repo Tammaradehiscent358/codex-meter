@@ -12,7 +12,10 @@ struct LiveCheck {
               payload.snapshot.mostConstrainedRemaining != nil else {
             throw CodexClientError.invalidResponse
         }
+        guard try await client.readAccount() != nil else {
+            throw CodexClientError.invalidResponse
+        }
         await client.stop()
-        print("Live Codex rate-limit check passed")
+        print("Live Codex account and rate-limit checks passed")
     }
 }

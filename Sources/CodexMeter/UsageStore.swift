@@ -25,8 +25,10 @@ struct AccountProfile: Codable, Equatable, Identifiable {
     let id: UUID
     var name: String
     let homePath: String?
+    var email: String?
 
     var homeURL: URL? { homePath.map(URL.init(fileURLWithPath:)) }
+    var displayName: String { email ?? name }
 }
 
 struct Celebration: Equatable, Identifiable {
@@ -61,6 +63,8 @@ final class UsageStore: ObservableObject {
         didSet { UserDefaults.standard.set(activeAccountID.uuidString, forKey: Self.activeAccountKey) }
     }
     @Published private(set) var celebration: Celebration?
+    @Published private(set) var isSwitchingCodexAccount = false
+    @Published private(set) var accountSwitchStatus: String?
 
     private var client: CodexAppServerClient
     private let activityScanner = LocalActivityScanner()
@@ -82,7 +86,7 @@ final class UsageStore: ObservableObject {
     private static let resetMilestoneKey = "lastBankedReset"
 
     init(previewMode: Bool = false) {
-        let defaultAccount = AccountProfile(id: UUID(), name: "Default", homePath: nil)
+        let defaultAccount = AccountProfile(id: UUID(), name: "Default", homePath: nil, email: nil)
         let loadedAccounts: [AccountProfile]
         if let data = UserDefaults.standard.data(forKey: Self.accountsKey),
            let decoded = try? JSONDecoder().decode([AccountProfile].self, from: data), !decoded.isEmpty {
@@ -118,7 +122,8 @@ final class UsageStore: ObservableObject {
                     primary: RateLimitWindow(usedPercent: 58, resetsAt: now.addingTimeInterval(8_040), durationMinutes: 300),
                     secondary: RateLimitWindow(usedPercent: 32, resetsAt: now.addingTimeInterval(403_200), durationMinutes: 10_080)
                 ),
-                fetchedAt: now
+                fetchedAt: now,
+                availableResetCredits: 3
             )
             activity = LocalActivitySnapshot(
                 days: [8, 5, 6, 3, 7, 4, 9].enumerated().map { offset, millions in
@@ -142,7 +147,9 @@ final class UsageStore: ObservableObject {
 
     var windows: [RateLimitWindow] { payload?.snapshot.windows ?? [] }
     var activeAccountName: String { accounts.first(where: { $0.id == activeAccountID })?.name ?? "Default" }
+    var activeAccountDisplayName: String { accounts.first(where: { $0.id == activeAccountID })?.displayName ?? "Default" }
     var canDeleteActiveAccount: Bool { accounts.first(where: { $0.id == activeAccountID })?.homePath != nil }
+    var bankedResetCount: Int? { payload?.availableResetCredits }
     var totalSavingsUSD: Double {
         guard let activity else { return 0 }
         guard let baseline = OpenAIPriceCatalog.price(for: "gpt-5.6-sol") else { return 0 }
@@ -211,7 +218,7 @@ final class UsageStore: ObservableObject {
             payload = newPayload
             errorMessage = newPayload.snapshot.windows.isEmpty ? "No Codex rate-limit windows were returned for this account." : nil
             await notifyIfNeeded(newPayload)
-            detectResetMilestone(previous: previous, current: newPayload)
+            detectBankedResetMilestone(previous: previous, current: newPayload)
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             await client.stop()
@@ -229,13 +236,60 @@ final class UsageStore: ObservableObject {
     }
 
     func openCodex() {
-        let appURL = URL(fileURLWithPath: "/Applications/ChatGPT.app")
-        if FileManager.default.fileExists(atPath: appURL.path) {
-            NSWorkspace.shared.openApplication(at: appURL, configuration: .init())
+        let settingsURL = URL(string: "codex://settings")
+        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first {
+            running.activate(options: [.activateAllWindows])
+            if let settingsURL { _ = NSWorkspace.shared.open(settingsURL) }
+            return
+        }
+        let discoveredURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
+        let fallbackURL = URL(fileURLWithPath: "/Applications/ChatGPT.app")
+        guard let appURL = discoveredURL ?? (FileManager.default.fileExists(atPath: fallbackURL.path) ? fallbackURL : nil) else {
+            errorMessage = "Codex is not installed in /Applications."
+            return
+        }
+        NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { [weak self] _, error in
+            Task { @MainActor in
+                if let error {
+                    self?.errorMessage = "Codex could not be opened: \(error.localizedDescription)"
+                } else if let settingsURL {
+                    _ = NSWorkspace.shared.open(settingsURL)
+                }
+            }
         }
     }
 
-    func switchAccount(to id: UUID) {
+    func requestAccountSwitch(to id: UUID) {
+        guard accounts.contains(where: { $0.id == id }), id != activeAccountID else { return }
+        guard let profile = accounts.first(where: { $0.id == id }) else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Switch to \(profile.displayName)?"
+        alert.informativeText = profile.homeURL == nil
+            ? "This is the Codex desktop profile. Codex Meter will switch its usage view to the account currently signed in there."
+            : "Choose whether to switch only Codex Meter, or also sign the Codex desktop app out and open OpenAI's secure browser login for this account."
+        if profile.homeURL == nil {
+            alert.addButton(withTitle: "Switch Meter")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            switchMeterAccount(to: id)
+            return
+        }
+        alert.addButton(withTitle: "Meter + Codex")
+        alert.addButton(withTitle: "Meter Only")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            switchMeterAccount(to: id)
+            Task { await switchCodexDesktopAccount(to: profile) }
+        case .alertSecondButtonReturn:
+            switchMeterAccount(to: id)
+        default:
+            return
+        }
+    }
+
+    private func switchMeterAccount(to id: UUID) {
         guard accounts.contains(where: { $0.id == id }), id != activeAccountID else { return }
         pollingTask?.cancel()
         activityPollingTask?.cancel()
@@ -273,7 +327,7 @@ final class UsageStore: ObservableObject {
             if !FileManager.default.fileExists(atPath: config.path) {
                 try Data("cli_auth_credentials_store = \"file\"\n".utf8).write(to: config, options: .atomic)
             }
-            let profile = AccountProfile(id: id, name: name, homePath: home.path)
+            let profile = AccountProfile(id: id, name: name, homePath: home.path, email: nil)
             accounts.append(profile)
             persistAccounts()
             startLogin(for: profile)
@@ -283,7 +337,12 @@ final class UsageStore: ObservableObject {
     }
 
     func deleteActiveAccount() {
-        guard let profile = accounts.first(where: { $0.id == activeAccountID }), let home = profile.homeURL else { return }
+        deleteAccount(id: activeAccountID)
+    }
+
+    func deleteAccount(id: UUID) {
+        guard let profile = accounts.first(where: { $0.id == id }), let home = profile.homeURL else { return }
+        let wasActive = profile.id == activeAccountID
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Delete \(profile.name)?"
@@ -292,26 +351,32 @@ final class UsageStore: ObservableObject {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        pollingTask?.cancel()
-        activityPollingTask?.cancel()
+        if wasActive {
+            pollingTask?.cancel()
+            activityPollingTask?.cancel()
+        }
         Task {
-            await client.stop()
+            if wasActive { await client.stop() }
             do {
-                try FileManager.default.removeItem(at: home)
+                loginProcesses.removeValue(forKey: profile.id)?.terminate()
+                try AccountProfileStorage.removeLocalProfile(at: home)
                 accounts.removeAll { $0.id == profile.id }
                 persistAccounts()
-                guard let fallback = accounts.first else { return }
-                activeAccountID = fallback.id
-                client = CodexAppServerClient(codexHome: fallback.homeURL)
-                payload = nil
-                activity = nil
+                if wasActive, let fallback = accounts.first {
+                    activeAccountID = fallback.id
+                    client = CodexAppServerClient(codexHome: fallback.homeURL)
+                    payload = nil
+                    activity = nil
+                    start()
+                }
                 celebration = Celebration(title: "Account removed", subtitle: "Local credentials were deleted", symbol: "trash")
                 dismissCelebration()
-                start()
             } catch {
-                client = CodexAppServerClient(codexHome: profile.homeURL)
+                if wasActive {
+                    client = CodexAppServerClient(codexHome: profile.homeURL)
+                    start()
+                }
                 errorMessage = "The local account could not be deleted: \(error.localizedDescription)"
-                start()
             }
         }
     }
@@ -347,7 +412,19 @@ final class UsageStore: ObservableObject {
             errorMessage = "The OpenAI sign-in was cancelled or did not complete. You can add the account again when ready."
             return
         }
-        switchAccount(to: profileID)
+        Task { await finishSuccessfulLogin(profileID: profileID) }
+    }
+
+    private func finishSuccessfulLogin(profileID: UUID) async {
+        if let index = accounts.firstIndex(where: { $0.id == profileID }), let home = accounts[index].homeURL {
+            let identityClient = CodexAppServerClient(codexHome: home)
+            if let account = try? await identityClient.readAccount() {
+                accounts[index].email = account.email
+                persistAccounts()
+            }
+            await identityClient.stop()
+        }
+        switchMeterAccount(to: profileID)
         celebration = Celebration(title: "Account ready", subtitle: "Secure sign-in completed", symbol: "person.crop.circle.badge.checkmark")
         dismissCelebration()
     }
@@ -382,14 +459,84 @@ final class UsageStore: ObservableObject {
         return max(0, baseline.estimate(item.usage) - actual.estimate(item.usage))
     }
 
-    private func detectResetMilestone(previous: RateLimitPayload?, current: RateLimitPayload) {
-        guard !previewMode, let old = previous?.snapshot.windows.first?.resetsAt, let new = current.snapshot.windows.first?.resetsAt,
-              old != new else { return }
-        let key = "\(new.timeIntervalSince1970)"
+    private func detectBankedResetMilestone(previous: RateLimitPayload?, current: RateLimitPayload) {
+        guard !previewMode,
+              let previousCount = previous?.availableResetCredits,
+              let currentCount = current.availableResetCredits,
+              currentCount > previousCount else { return }
+        let key = "\(activeAccountID.uuidString)-\(currentCount)"
         guard UserDefaults.standard.string(forKey: Self.resetMilestoneKey) != key else { return }
         UserDefaults.standard.set(key, forKey: Self.resetMilestoneKey)
-        celebration = Celebration(title: "Reset banked", subtitle: "A fresh Codex allowance is ready", symbol: "arrow.counterclockwise.circle.fill")
+        celebration = Celebration(title: "Reset banked", subtitle: "\(currentCount) available for this account", symbol: "arrow.counterclockwise.circle.fill")
         dismissCelebration()
+    }
+
+    private func switchCodexDesktopAccount(to profile: AccountProfile) async {
+        guard !isSwitchingCodexAccount else { return }
+        isSwitchingCodexAccount = true
+        accountSwitchStatus = "Signing Codex out…"
+        errorMessage = nil
+
+        let desktopClient = CodexAppServerClient()
+        do {
+            var expectedEmail = profile.email
+            if expectedEmail == nil, let home = profile.homeURL {
+                accountSwitchStatus = "Checking \(profile.name)…"
+                let profileClient = CodexAppServerClient(codexHome: home)
+                if let account = try? await profileClient.readAccount() {
+                    expectedEmail = account.email
+                    if let index = accounts.firstIndex(where: { $0.id == profile.id }) {
+                        accounts[index].email = account.email
+                        persistAccounts()
+                    }
+                }
+                await profileClient.stop()
+            }
+            accountSwitchStatus = "Signing Codex out…"
+            try await closeCodexDesktop()
+            try await desktopClient.logoutAccount()
+            accountSwitchStatus = "Waiting for secure OpenAI sign-in…"
+            let login = try await desktopClient.startChatGPTLogin()
+            guard NSWorkspace.shared.open(login.authorizationURL) else {
+                throw CodexClientError.server("The OpenAI sign-in page could not be opened in your browser.")
+            }
+            try await desktopClient.waitForLogin(id: login.id)
+            guard let signedIn = try await desktopClient.readAccount(refreshToken: true) else {
+                throw CodexClientError.server("Codex did not report a signed-in account after login.")
+            }
+            if let expected = expectedEmail, let actual = signedIn.email,
+               expected.caseInsensitiveCompare(actual) != .orderedSame {
+                throw CodexClientError.server("Codex signed in as \(actual), not \(expected). Sign in again and choose the intended account.")
+            }
+            await desktopClient.stop()
+            accountSwitchStatus = nil
+            isSwitchingCodexAccount = false
+            openCodex()
+            celebration = Celebration(
+                title: "Codex account switched",
+                subtitle: signedIn.email ?? profile.displayName,
+                symbol: "person.crop.circle.badge.checkmark"
+            )
+            dismissCelebration()
+        } catch {
+            await desktopClient.stop()
+            accountSwitchStatus = nil
+            isSwitchingCodexAccount = false
+            errorMessage = "Codex account switch failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+            openCodex()
+        }
+    }
+
+    private func closeCodexDesktop() async throws {
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
+        running.forEach { _ = $0.terminate() }
+        let deadline = ContinuousClock.now + .seconds(8)
+        while NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").contains(where: { !$0.isTerminated }) {
+            guard ContinuousClock.now < deadline else {
+                throw CodexClientError.server("Codex could not be closed before signing out. Quit Codex and try again.")
+            }
+            try await Task.sleep(for: .milliseconds(150))
+        }
     }
 
     private func dismissCelebration() {

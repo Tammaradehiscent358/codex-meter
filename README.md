@@ -58,9 +58,11 @@ Alert thresholds, menu-bar modes, history charts, cost rates and CLI automation 
 - Breaks local usage down by the actual model recorded for each Codex turn.
 - Automatically calculates an API-equivalent estimate with bundled official OpenAI standard prices.
 - Displays estimates in USD, AUD or EUR with a dated local ECB reference-rate snapshot.
-- Adds accounts through OpenAI's secure browser login, then hot-swaps isolated Codex profiles from a dropdown.
-- Deletes unused local account profiles and their saved Codex credentials with confirmation.
-- Celebrates savings, token milestones and banked resets, while calling out low usage clearly.
+- Adds accounts through OpenAI's secure browser login, then hot-swaps profiles from the account menu beside refresh.
+- Asks whether each profile change should affect Meter only or Meter plus the Codex desktop app.
+- For a desktop swap, signs Codex out through the official app-server method, completes OpenAI's browser login, verifies the account and relaunches Codex.
+- Deletes unused local account profiles and their saved Codex credentials with confirmation, including stale records whose folder is already gone.
+- Shows OpenAI's real banked-reset count when the account returns it, and celebrates reset, savings and token milestones.
 - Switches between icon + percentage, percentage-only, icon-only and activity-chart menu-bar modes.
 - Includes a universal `codex-meter` CLI with stable text/JSON output and threshold exit codes.
 - Supports launch at login without adding a Dock icon.
@@ -85,7 +87,7 @@ The current community build is ad-hoc signed, not Apple-notarized. If macOS bloc
 
 Codex Meter checks the ChatGPT app bundle and common Homebrew, npm, Volta, and local CLI locations. Developers launching from Terminal can also set `CODEX_PATH` to an absolute Codex executable path.
 
-Codex Meter account profiles control the meter and its bundled Codex CLI session. The Codex desktop app maintains a separate login and currently exposes no supported account-switch API or deep link, so the app provides a direct handoff to switch that session inside Codex.
+Codex Meter keeps each saved profile in an isolated `CODEX_HOME`. When you choose **Meter + Codex**, it uses OpenAI's documented `account/logout` and ChatGPT browser-login flow against the default Codex profile, verifies that login, then relaunches the desktop app. OpenAI does not publish a direct account-switch deep link, so a browser confirmation is required; Codex Meter never asks for or handles your password or MFA code.
 
 ## Privacy by design
 

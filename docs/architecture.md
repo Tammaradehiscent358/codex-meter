@@ -11,11 +11,13 @@ Codex Meter is a SwiftUI/AppKit status-bar application with six small layers:
 
 `UsageStore` can select an isolated account profile. Each profile is a Codex-owned `CODEX_HOME` directory with file-scoped credential storage, and the client starts `codex app-server` with that environment only. Adding a profile invokes Codex's supported browser login flow and activates the account only after login succeeds; Codex Meter never inspects the profile's credentials.
 
-Account deletion removes the selected non-default profile only after a native confirmation. The desktop Codex app is a separate authentication surface; public Codex deep links include settings but no supported account-switch endpoint, so the meter opens Codex for the user to complete that switch there rather than injecting cached tokens or requesting Accessibility control.
+Account deletion removes the selected non-default profile only after a native confirmation. Missing profile folders are treated as an already-completed filesystem removal so stale account records can still be cleared.
+
+The desktop Codex app uses the default Codex authentication profile. A confirmed **Meter + Codex** switch closes the desktop app, creates a default-home app-server connection, calls the documented `account/logout` method, starts `account/login/start` with ChatGPT browser authentication, waits for `account/login/completed`, verifies the result with `account/read`, and relaunches Codex. This is deliberately a fresh OAuth flow: Codex Meter does not copy tokens between profiles, collect passwords or MFA codes, call internal token-login modes, or request Accessibility control.
 
 The client performs the required `initialize` handshake before calling `account/rateLimits/read`. It prefers the `codex` entry in the multi-bucket response and falls back to the backward-compatible single-bucket response. Percentages are clamped to 0–100, and the menu bar displays the lowest remaining percentage across returned windows.
 
-The app intentionally does not consume rate-limit reset credits or expose any write-capable Codex method.
+The app intentionally does not consume rate-limit reset credits or expose conversation, configuration, or usage-changing methods. Its only authentication writes are explicit user-confirmed logout/login operations during desktop account switching.
 
 ## Local activity
 
@@ -29,7 +31,7 @@ The first seven-day scan is bounded to recently modified logs. Results are cache
 
 `DisplayCurrency` converts the USD base estimate to USD, AUD or EUR using a dated ECB reference-rate snapshot. The selected app currency is a local preference; the CLI can optionally override the USD-to-selected-currency rate. No live FX request runs in the app.
 
-Savings are intentionally an estimate: each known model's API-equivalent cost is compared with the same token usage priced as GPT-5.6 Sol. Milestone banners are local-only UI state and are triggered at savings, token, low-usage and reset transitions.
+Savings are intentionally an estimate: each known model's API-equivalent cost is compared with the same token usage priced as GPT-5.6 Sol. Milestone banners are local-only UI state and are triggered at savings, token, low-usage and reset-credit transitions. Banked resets come directly from `rateLimitResetCredits.availableCount`; the UI shows unavailable rather than inferring a value when that field is absent.
 
 Cached input is a subset of input, so estimates price non-cached input as `input - cached`, then apply model-specific input, cached-input and output rates. Reasoning output is not added again because it is contained in output totals. Aggregate logs cannot reliably reveal request-level pricing adjustments such as long context, so the UI always calls the result an API-equivalent estimate rather than a bill.
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0 — 2026-07-15
+
+- Moved the named account switcher beside refresh with an explicit down-arrow affordance.
+- Added a confirmation choice for Meter-only or Meter plus Codex desktop switching.
+- Implemented desktop switching with OpenAI's documented app-server logout, secure browser login, account verification and relaunch flow.
+- Fixed Codex opening with the supported settings deep link plus bundle-ID and application-path fallbacks.
+- Fixed deletion for stale account records whose local profile directory is already missing.
+- Added visible banked-reset counts from OpenAI's authoritative `rateLimitResetCredits.availableCount` field, with an honest unavailable state.
+- Added live account-read, reset-history and profile-deletion validation.
+
 ## 1.4.0 — 2026-07-15
 
 - Added confirmed deletion of unused local account profiles and their Codex-owned credentials.

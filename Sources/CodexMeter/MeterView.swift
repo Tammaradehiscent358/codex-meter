@@ -56,6 +56,7 @@ struct MeterView: View {
                     .lineLimit(1)
             }
             Spacer()
+            accountMenu
             Button {
                 Task {
                     await store.refresh()
@@ -76,6 +77,56 @@ struct MeterView: View {
             .accessibilityLabel("Refresh Codex usage")
         }
         .padding(16)
+    }
+
+    private var accountMenu: some View {
+        Menu {
+            Section("Use account") {
+                ForEach(store.accounts) { account in
+                    Button {
+                        store.requestAccountSwitch(to: account.id)
+                    } label: {
+                        if account.id == store.activeAccountID {
+                            Label(account.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(account.displayName)
+                        }
+                    }
+                    .disabled(account.id == store.activeAccountID)
+                }
+            }
+            Divider()
+            Button("Add account…", systemImage: "person.badge.plus") {
+                store.addAccount()
+            }
+            let removableAccounts = store.accounts.filter { $0.homePath != nil }
+            if !removableAccounts.isEmpty {
+                Menu("Delete account", systemImage: "trash") {
+                    ForEach(removableAccounts) { account in
+                        Button(account.displayName, role: .destructive) {
+                            store.deleteAccount(id: account.id)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "person.crop.circle")
+                Text(store.activeAccountDisplayName)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .frame(maxWidth: 112)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.isSwitchingCodexAccount)
+        .help("Switch Codex account")
+        .accessibilityLabel("Current account: \(store.activeAccountDisplayName). Open account switcher")
     }
 
     @ViewBuilder
@@ -143,6 +194,22 @@ struct MeterView: View {
             }
         } else {
             VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.counterclockwise.circle")
+                        .foregroundStyle(Color.accentColor)
+                    Text("Banked resets")
+                        .font(.system(size: 10, weight: .medium))
+                    Spacer()
+                    Text(store.bankedResetCount.map(String.init) ?? "—")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .help(store.bankedResetCount == nil
+                    ? "OpenAI did not return a banked reset count for this account"
+                    : "Reset credits currently available for this account")
+                Divider().padding(.leading, 16)
                 ForEach(Array(store.windows.enumerated()), id: \.offset) { index, window in
                     UsageRow(window: window)
                     if index < store.windows.count - 1 { Divider().padding(.leading, 16) }
@@ -176,43 +243,38 @@ struct MeterView: View {
     private var footer: some View {
         VStack(spacing: 10) {
             HStack {
-                Text("Meter account")
-                    .font(.system(size: 12))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Active account")
+                        .font(.system(size: 12))
+                    Text(store.activeAccountDisplayName)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
-                Picker("Account", selection: Binding(
-                    get: { store.activeAccountID },
-                    set: { store.switchAccount(to: $0) }
-                )) {
-                    ForEach(store.accounts) { account in
-                        Text(account.name).tag(account.id)
-                    }
+                Button("Add…") { store.addAccount() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                Button("Delete…") { store.deleteActiveAccount() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(store.canDeleteActiveAccount ? Color.red : Color.secondary)
+                    .disabled(!store.canDeleteActiveAccount)
+            }
+            if let status = store.accountSwitchStatus {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(status)
+                        .font(.system(size: 10, weight: .medium))
+                    Spacer()
                 }
-                .labelsHidden()
-                .frame(width: 132)
-                Button {
-                    store.addAccount()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.plain)
-                .help("Add Codex account")
-                .accessibilityLabel("Add Codex account")
-                Button {
-                    store.deleteActiveAccount()
-                } label: {
-                    Image(systemName: "minus")
-                }
-                .buttonStyle(.plain)
-                .help("Delete selected local account")
-                .accessibilityLabel("Delete selected local account")
-                .disabled(!store.canDeleteActiveAccount)
+                .foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
-                Text("The Codex desktop app keeps a separate login.")
+                Text("Desktop switching uses OpenAI's secure sign-in.")
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Switch in Codex…") { store.openCodex() }
+                Button("Open Codex…") { store.openCodex() }
                     .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Color.accentColor)

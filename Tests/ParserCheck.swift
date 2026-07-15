@@ -13,6 +13,11 @@ struct ParserCheck {
         precondition(payload.snapshot.mostConstrainedRemaining == 19)
         precondition(payload.snapshot.primary?.displayName == "5-hour limit")
         precondition(payload.snapshot.secondary?.displayName == "Weekly limit")
+        precondition(payload.availableResetCredits == nil)
+
+        let withBankedResets = #"{"id":3,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":10}},"rateLimitResetCredits":{"availableCount":2,"credits":null}}}"#
+        let banked = try require(RateLimitParser.parseResponse(Data(withBankedResets.utf8)))
+        precondition(banked.availableResetCredits == 2)
 
         let buckets = #"{"id":2,"result":{"rateLimits":{},"rateLimitsByLimitId":{"other":{"primary":{"usedPercent":4}},"codex":{"primary":{"usedPercent":22}}}}}"#
         let selected = try require(RateLimitParser.parseResponse(Data(buckets.utf8)))

@@ -19,7 +19,11 @@ Codex Meter has no analytics, telemetry, advertising, account service or history
 
 Adding an account starts the supported `codex login` browser flow with a profile-specific `CODEX_HOME`. Email, password, SSO and MFA are entered only on OpenAI's secure page; the browser returns the completed session directly to Codex. Codex Meter then starts the read-only app-server under that profile. The app does not copy, parse or display `auth.json`, access tokens, passwords or verification codes.
 
-Deleting a non-default profile requires confirmation and removes its entire local `CODEX_HOME`, including the Codex-owned cached credentials. It does not delete or modify the OpenAI account. Meter profiles do not rewrite the separate Codex desktop-app session.
+Deleting a non-default profile requires confirmation and removes its entire local `CODEX_HOME`, including the Codex-owned cached credentials. It does not delete or modify the OpenAI account. If the folder is already absent, Codex Meter still removes the stale profile entry.
+
+Choosing **Meter + Codex** is an explicit authentication change. Codex Meter closes the desktop app, asks Codex app-server to log out the default profile, and starts OpenAI's supported ChatGPT browser login. The browser and Codex exchange the credentials directly; Meter only receives the documented success state and account email used to verify that the intended profile was selected. Passwords, SSO secrets, MFA codes, access tokens and `auth.json` contents are never read or copied by Meter.
+
+The banked-reset number is OpenAI's reported `availableCount`, not a local estimate. Codex Meter displays it but never calls the reset-credit consumption method.
 
 ## Cost estimates
 

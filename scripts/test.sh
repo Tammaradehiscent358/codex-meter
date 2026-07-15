@@ -17,6 +17,12 @@ swiftc \
   -o "$TMP/activity-check"
 "$TMP/activity-check"
 
+swiftc \
+  "$ROOT/Sources/CodexMeterCore/AccountProfileStorage.swift" \
+  "$ROOT/Tests/AccountProfileStorageCheck.swift" \
+  -o "$TMP/account-profile-storage-check"
+"$TMP/account-profile-storage-check"
+
 if [[ "${SKIP_LIVE_CODEX_CHECK:-0}" != "1" ]]; then
   swiftc \
     "$ROOT/Sources/CodexMeterCore/RateLimitModels.swift" \
