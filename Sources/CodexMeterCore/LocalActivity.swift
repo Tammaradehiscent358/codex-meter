@@ -75,19 +75,99 @@ public struct DailyTokenUsage: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public struct ModelTokenUsage: Codable, Equatable, Identifiable, Sendable {
+    public let model: String
+    public let usage: TokenUsage
+    public var id: String { model }
+
+    public init(model: String, usage: TokenUsage) {
+        self.model = model
+        self.usage = usage
+    }
+}
+
 public struct LocalActivitySnapshot: Codable, Equatable, Sendable {
     public let days: [DailyTokenUsage]
+    public let models: [ModelTokenUsage]
     public let sampledAt: Date
     public let filesRead: Int
 
-    public init(days: [DailyTokenUsage], sampledAt: Date, filesRead: Int) {
+    public init(days: [DailyTokenUsage], models: [ModelTokenUsage] = [], sampledAt: Date, filesRead: Int) {
         self.days = days
+        self.models = models
         self.sampledAt = sampledAt
         self.filesRead = filesRead
     }
 
     public var total: TokenUsage { days.reduce(TokenUsage()) { $0 + $1.usage } }
     public var today: TokenUsage { days.last?.usage ?? TokenUsage() }
+}
+
+public struct ModelPrice: Codable, Equatable, Identifiable, Sendable {
+    public let model: String
+    public let inputPerMillion: Double
+    public let cachedInputPerMillion: Double
+    public let outputPerMillion: Double
+    public var id: String { model }
+
+    public init(model: String, inputPerMillion: Double, cachedInputPerMillion: Double, outputPerMillion: Double) {
+        self.model = model
+        self.inputPerMillion = inputPerMillion
+        self.cachedInputPerMillion = cachedInputPerMillion
+        self.outputPerMillion = outputPerMillion
+    }
+
+    public func estimate(_ usage: TokenUsage) -> Double {
+        LocalCostRates(inputPerMillion: inputPerMillion, cachedInputPerMillion: cachedInputPerMillion, outputPerMillion: outputPerMillion).estimate(usage)
+    }
+}
+
+public enum OpenAIPriceCatalog {
+    public static let effectiveDate = "2026-07-15"
+    public static let sourceURL = URL(string: "https://developers.openai.com/api/docs/models")!
+    public static let prices: [ModelPrice] = [
+        .init(model: "gpt-5.6-sol", inputPerMillion: 5, cachedInputPerMillion: 0.5, outputPerMillion: 30),
+        .init(model: "gpt-5.6", inputPerMillion: 5, cachedInputPerMillion: 0.5, outputPerMillion: 30),
+        .init(model: "gpt-5.6-terra", inputPerMillion: 2.5, cachedInputPerMillion: 0.25, outputPerMillion: 15),
+        .init(model: "gpt-5.6-luna", inputPerMillion: 1, cachedInputPerMillion: 0.1, outputPerMillion: 6),
+        .init(model: "gpt-5.5", inputPerMillion: 5, cachedInputPerMillion: 0.5, outputPerMillion: 30),
+        .init(model: "gpt-5.4", inputPerMillion: 2.5, cachedInputPerMillion: 0.25, outputPerMillion: 15),
+        .init(model: "gpt-5.4-mini", inputPerMillion: 0.75, cachedInputPerMillion: 0.075, outputPerMillion: 4.5)
+    ]
+
+    public static func price(for model: String) -> ModelPrice? {
+        prices.first { $0.model == model }
+    }
+
+    public static func estimate(_ models: [ModelTokenUsage]) -> Double {
+        models.reduce(0) { total, item in total + (price(for: item.model)?.estimate(item.usage) ?? 0) }
+    }
+}
+
+public enum DisplayCurrency: String, Codable, CaseIterable, Identifiable, Sendable {
+    case usd = "USD"
+    case aud = "AUD"
+    case eur = "EUR"
+
+    public var id: String { rawValue }
+    public var code: String { rawValue }
+
+    public var bundledUSDExchangeRate: Double {
+        switch self {
+        case .usd: return 1
+        case .aud: return 1.6428 / 1.1405
+        case .eur: return 1 / 1.1405
+        }
+    }
+
+    public func convertFromUSD(_ amount: Double, overrideRate: Double? = nil) -> Double {
+        amount * (overrideRate ?? bundledUSDExchangeRate)
+    }
+}
+
+public enum CurrencyRateCatalog {
+    public static let effectiveDate = "2026-07-14"
+    public static let sourceURL = URL(string: "https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html")!
 }
 
 public struct LocalCostRates: Codable, Equatable, Sendable {
@@ -115,11 +195,13 @@ public actor LocalActivityScanner {
     private struct CumulativeRecord: Sendable {
         let date: Date
         let total: TokenUsage
+        let model: String?
     }
 
     private struct Event: Sendable {
         let date: Date
         let usage: TokenUsage
+        let model: String
         let fingerprint: String
     }
 
@@ -165,17 +247,24 @@ public actor LocalActivityScanner {
 
         var seen = Set<String>()
         var buckets: [Date: TokenUsage] = [:]
+        var modelBuckets: [String: TokenUsage] = [:]
         for event in allEvents where event.date >= cutoff && event.date <= now {
             guard seen.insert(event.fingerprint).inserted else { continue }
             let day = calendar.startOfDay(for: event.date)
             buckets[day] = (buckets[day] ?? TokenUsage()) + event.usage
+            modelBuckets[event.model] = (modelBuckets[event.model] ?? TokenUsage()) + event.usage
         }
 
         let output = (0..<days).compactMap { offset -> DailyTokenUsage? in
             guard let date = calendar.date(byAdding: .day, value: offset, to: cutoff) else { return nil }
             return DailyTokenUsage(date: date, usage: buckets[date] ?? TokenUsage())
         }
-        return LocalActivitySnapshot(days: output, sampledAt: now, filesRead: candidates.count)
+        var modelOutput = modelBuckets.map { key, value in ModelTokenUsage(model: key, usage: value) }
+        modelOutput.sort { lhs, rhs in
+            if lhs.usage.totalTokens == rhs.usage.totalTokens { return lhs.model < rhs.model }
+            return lhs.usage.totalTokens > rhs.usage.totalTokens
+        }
+        return LocalActivitySnapshot(days: output, models: modelOutput, sampledAt: now, filesRead: candidates.count)
     }
 
     private func discoverFiles(modifiedSince cutoff: Date) throws -> [URL] {
@@ -203,6 +292,7 @@ public actor LocalActivityScanner {
     private func readEvents(from urls: [URL]) throws -> [Event] {
         guard !urls.isEmpty else { return [] }
         var recordsBySession: [String: [CumulativeRecord]] = [:]
+        var currentModelBySession: [String: String] = [:]
         var matchesFound = 0
         var decodedRecords = 0
         let jsonMarker = Data(":{\"timestamp\"".utf8)
@@ -211,7 +301,7 @@ public actor LocalActivityScanner {
             let process = Process()
             let pipe = Pipe()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/grep")
-            process.arguments = ["-H", "-F", "\"type\":\"token_count\""] + batch.map(\.path)
+            process.arguments = ["-H", "-E", "\"type\"[[:space:]]*:[[:space:]]*\"(turn_context|token_count)\""] + batch.map(\.path)
             process.standardOutput = pipe
             process.standardError = FileHandle.nullDevice
             do { try process.run() } catch { throw LocalActivityError.filterUnavailable }
@@ -225,10 +315,15 @@ public actor LocalActivityScanner {
                 let raw = Data(line)
                 guard let marker = raw.range(of: jsonMarker),
                       let path = String(data: raw[..<marker.lowerBound], encoding: .utf8),
-                      let record = decodeRecord(Data(raw[(marker.lowerBound + 1)...])) else { continue }
+                      let record = decodeCandidate(Data(raw[(marker.lowerBound + 1)...])) else { continue }
                 decodedRecords += 1
                 let sessionID = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-                recordsBySession[sessionID, default: []].append(record)
+                switch record {
+                case .model(let model):
+                    currentModelBySession[sessionID] = model
+                case .usage(let date, let total):
+                    recordsBySession[sessionID, default: []].append(CumulativeRecord(date: date, total: total, model: currentModelBySession[sessionID]))
+                }
             }
         }
         if matchesFound > 0, decodedRecords == 0 { throw LocalActivityError.unsupportedRecords }
@@ -255,6 +350,7 @@ public actor LocalActivityScanner {
                 output.append(Event(
                     date: record.date,
                     usage: delta,
+                    model: record.model ?? "unknown",
                     fingerprint: "\(sessionID):\(generation):\(record.total.fingerprint)"
                 ))
             }
@@ -262,19 +358,31 @@ public actor LocalActivityScanner {
         return output
     }
 
-    private func decodeRecord(_ data: Data) -> CumulativeRecord? {
-        guard let record = try? JSONDecoder().decode(TokenRecord.self, from: data),
-              record.type == "event_msg",
-              record.payload.type == "token_count",
-              let info = record.payload.info,
-              let total = info.totalTokenUsage?.validated,
-              let date = parseDate(record.timestamp) else { return nil }
-        return CumulativeRecord(date: date, total: total)
+    private enum Candidate { case model(String), usage(Date, TokenUsage) }
+
+    private func decodeCandidate(_ data: Data) -> Candidate? {
+        if let context = try? JSONDecoder().decode(TurnContextRecord.self, from: data),
+           context.type == "turn_context" {
+            let model = context.payload.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !model.isEmpty, model.utf8.count <= 128,
+                  model.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
+            return .model(model)
+        }
+        guard let record = try? JSONDecoder().decode(TokenRecord.self, from: data), record.type == "event_msg",
+              record.payload.type == "token_count", let info = record.payload.info,
+              let total = info.totalTokenUsage?.validated, let date = parseDate(record.timestamp) else { return nil }
+        return .usage(date, total)
     }
 
     private func parseDate(_ value: String) -> Date? {
         (try? fractionalISO.parse(value)) ?? (try? standardISO.parse(value))
     }
+}
+
+private struct TurnContextRecord: Decodable {
+    let type: String
+    let payload: Payload
+    struct Payload: Decodable { let model: String }
 }
 
 private struct TokenRecord: Decodable {

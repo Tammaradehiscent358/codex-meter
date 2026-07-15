@@ -38,6 +38,9 @@ final class UsageStore: ObservableObject {
     @Published var inputRate: Double { didSet { persistRates() } }
     @Published var cachedInputRate: Double { didSet { persistRates() } }
     @Published var outputRate: Double { didSet { persistRates() } }
+    @Published var currency: DisplayCurrency {
+        didSet { UserDefaults.standard.set(currency.rawValue, forKey: Self.currencyKey) }
+    }
 
     private let client = CodexAppServerClient()
     private let activityScanner = LocalActivityScanner()
@@ -50,6 +53,7 @@ final class UsageStore: ObservableObject {
     private static let inputRateKey = "costInputRate"
     private static let cachedInputRateKey = "costCachedInputRate"
     private static let outputRateKey = "costOutputRate"
+    private static let currencyKey = "displayCurrency"
 
     init(previewMode: Bool = false) {
         self.previewMode = previewMode
@@ -59,6 +63,7 @@ final class UsageStore: ObservableObject {
         inputRate = UserDefaults.standard.double(forKey: Self.inputRateKey)
         cachedInputRate = UserDefaults.standard.double(forKey: Self.cachedInputRateKey)
         outputRate = UserDefaults.standard.double(forKey: Self.outputRateKey)
+        currency = DisplayCurrency(rawValue: UserDefaults.standard.string(forKey: Self.currencyKey) ?? "") ?? .usd
         if previewMode {
             let now = Date()
             payload = RateLimitPayload(
@@ -78,6 +83,10 @@ final class UsageStore: ObservableObject {
                         usage: TokenUsage(inputTokens: Int64(millions) * 900_000, cachedInputTokens: Int64(millions) * 650_000, outputTokens: Int64(millions) * 100_000, totalTokens: Int64(millions) * 1_000_000)
                     )
                 },
+                models: [
+                    ModelTokenUsage(model: "gpt-5.6-sol", usage: TokenUsage(inputTokens: 25_000_000, cachedInputTokens: 18_000_000, outputTokens: 3_000_000, totalTokens: 28_000_000)),
+                    ModelTokenUsage(model: "gpt-5.6-terra", usage: TokenUsage(inputTokens: 14_000_000, cachedInputTokens: 10_000_000, outputTokens: 2_000_000, totalTokens: 16_000_000))
+                ],
                 sampledAt: now,
                 filesRead: 12
             )

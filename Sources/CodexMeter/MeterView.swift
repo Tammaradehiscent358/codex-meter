@@ -64,7 +64,7 @@ struct MeterView: View {
             quotaContent
             if let activity = store.activity {
                 Divider()
-                LocalActivityView(activity: activity, rates: store.costRates)
+                LocalActivityView(activity: activity, rates: store.costRates, currency: store.currency)
             } else if let activityError = store.activityError {
                 Divider()
                 HStack(alignment: .top, spacing: 9) {
@@ -132,6 +132,18 @@ struct MeterView: View {
                 .frame(width: 150)
             }
             HStack {
+                Text("Currency")
+                    .font(.system(size: 12))
+                Spacer()
+                Picker("Currency", selection: $store.currency) {
+                    ForEach(DisplayCurrency.allCases) { currency in
+                        Text(currency.code).tag(currency)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 72)
+            }
+            HStack {
                 Text("Low-usage alert")
                     .font(.system(size: 12))
                 Spacer()
@@ -143,12 +155,12 @@ struct MeterView: View {
                 .labelsHidden()
                 .frame(width: 72)
             }
-            DisclosureGroup("Custom cost estimate") {
+            DisclosureGroup("Fallback USD price for unknown models") {
                 VStack(spacing: 7) {
                     CostRateField(label: "Input", value: $store.inputRate)
                     CostRateField(label: "Cached input", value: $store.cachedInputRate)
                     CostRateField(label: "Output", value: $store.outputRate)
-                    Text("Your rates in USD per million tokens. Estimates are API-equivalent, not subscription spend.")
+                    Text("Only used when a model has no bundled official price. USD per million tokens.")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -187,6 +199,7 @@ struct MeterView: View {
 private struct LocalActivityView: View {
     let activity: LocalActivitySnapshot
     let rates: LocalCostRates
+    let currency: DisplayCurrency
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -227,19 +240,63 @@ private struct LocalActivityView: View {
             .accessibilityLabel("Seven-day local token activity")
             .accessibilityValue(accessibilitySummary)
 
+            if !activity.models.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(activity.models) { item in
+                        HStack(spacing: 8) {
+                            Text(item.model)
+                                .font(.system(size: 10, weight: .medium))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(modelShare(item))
+                                .foregroundStyle(.secondary)
+                            Text(modelCost(item))
+                                .monospacedDigit()
+                                .frame(width: 54, alignment: .trailing)
+                        }
+                        .font(.system(size: 10))
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+
             HStack {
                 Text("Today \(compactTokens(activity.today.totalTokens))")
                 Spacer()
-                if rates.isConfigured {
-                    Text(String(format: "API-equivalent ≈ $%.2f", rates.estimate(activity.total)))
-                } else {
-                    Text("Cost estimate off")
-                }
+                Text("API-equivalent ≈ \(formatted(automaticEstimate))")
             }
             .font(.system(size: 10))
             .foregroundStyle(.secondary)
+            Text("API prices checked 15 Jul 2026 · estimate only")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
         }
         .padding(16)
+    }
+
+    private var automaticEstimate: Double {
+        let usd = activity.models.reduce(0) { total, item in
+            if let price = OpenAIPriceCatalog.price(for: item.model) { return total + price.estimate(item.usage) }
+            return total + (rates.isConfigured ? rates.estimate(item.usage) : 0)
+        }
+        return currency.convertFromUSD(usd)
+    }
+
+    private func modelCost(_ item: ModelTokenUsage) -> String {
+        if let price = OpenAIPriceCatalog.price(for: item.model) {
+            return formatted(currency.convertFromUSD(price.estimate(item.usage)))
+        }
+        if rates.isConfigured { return formatted(currency.convertFromUSD(rates.estimate(item.usage))) + "*" }
+        return "Unpriced"
+    }
+
+    private func modelShare(_ item: ModelTokenUsage) -> String {
+        guard activity.total.totalTokens > 0 else { return "0%" }
+        return "\(Int((Double(item.usage.totalTokens) / Double(activity.total.totalTokens) * 100).rounded()))% · \(compactTokens(item.usage.totalTokens))"
+    }
+
+    private func formatted(_ amount: Double) -> String {
+        amount.formatted(.currency(code: currency.code).precision(.fractionLength(2)))
     }
 
     private func compactTokens(_ value: Int64) -> String {

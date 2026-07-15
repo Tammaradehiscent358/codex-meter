@@ -29,6 +29,7 @@ fi
 swift build --package-path "$ROOT"
 "$ROOT/.build/debug/codex-meter" --help >/dev/null
 "$ROOT/.build/debug/codex-meter" history --days 1 --json >/dev/null
+"$ROOT/.build/debug/codex-meter" history --days 1 --currency AUD --json | /usr/bin/grep -q '"currency":"AUD"'
 
 set +e
 "$ROOT/.build/debug/codex-meter" history --days 0 >/dev/null 2>&1
@@ -42,7 +43,10 @@ fi
 for BAD_ARGS in \
   "history --input-rate 2 --input-rate nope" \
   "history --input-rate nan" \
-  "history --days --json"
+  "history --days --json" \
+  "history --currency GBP" \
+  "history --exchange-rate 1.5" \
+  "history --currency EUR --exchange-rate 0"
 do
   set +e
   "$ROOT/.build/debug/codex-meter" ${(z)BAD_ARGS} >/dev/null 2>&1

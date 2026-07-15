@@ -16,13 +16,18 @@ struct ActivityCheck {
         try FileManager.default.createDirectory(at: archived, withIntermediateDirectories: true)
         let formatter = ISO8601DateFormatter()
         let now = Date()
+        func context(_ model: String) -> String {
+            #"{"timestamp":"\#(formatter.string(from: now))","type":"turn_context","payload":{"model":"\#(model)","summary":"never retain me"}}"#
+        }
         func event(at offset: TimeInterval, input: Int, cached: Int, output: Int, total: Int) -> String {
             let timestamp = formatter.string(from: now.addingTimeInterval(offset))
             return #"{"timestamp":"\#(timestamp)","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2},"total_token_usage":{"input_tokens":\#(input),"cached_input_tokens":\#(cached),"output_tokens":\#(output),"reasoning_output_tokens":0,"total_tokens":\#(total)},"model_context_window":1000},"private_prompt":"never retain me"}}"#
         }
         let records = [
+            context("gpt-5.6-sol"),
             event(at: -4, input: 100, cached: 40, output: 20, total: 120),
             event(at: -3, input: 100, cached: 40, output: 20, total: 120),
+            context("gpt-5.6-luna"),
             event(at: -2, input: 150, cached: 50, output: 30, total: 180),
             event(at: -1, input: 30, cached: 5, output: 10, total: 40),
             #"{"timestamp":"\#(formatter.string(from: now))","type":"event_msg","payload":{"type":"user_message","message":"secret"}}"#
@@ -36,10 +41,27 @@ struct ActivityCheck {
         precondition(snapshot.total.cachedInputTokens == 55)
         precondition(snapshot.total.outputTokens == 40)
         precondition(snapshot.total.totalTokens == 220)
+        precondition(snapshot.models.count == 2)
+        precondition(snapshot.models.first(where: { $0.model == "gpt-5.6-sol" })?.usage.totalTokens == 120)
+        precondition(snapshot.models.first(where: { $0.model == "gpt-5.6-luna" })?.usage.totalTokens == 100)
 
         let rates = LocalCostRates(inputPerMillion: 2, cachedInputPerMillion: 0.5, outputPerMillion: 8)
         let expected = 125.0 / 1_000_000 * 2 + 55.0 / 1_000_000 * 0.5 + 40.0 / 1_000_000 * 8
         precondition(abs(rates.estimate(snapshot.total) - expected) < 0.0000001)
+        precondition(OpenAIPriceCatalog.price(for: "gpt-5.6-sol")?.inputPerMillion == 5)
+        precondition(OpenAIPriceCatalog.price(for: "not-a-real-model") == nil)
+        let official = OpenAIPriceCatalog.estimate(snapshot.models)
+        precondition(official > 0)
+        precondition(DisplayCurrency.usd.convertFromUSD(10) == 10)
+        precondition(abs(DisplayCurrency.eur.convertFromUSD(1) - (1 / 1.1405)) < 0.0000001)
+        precondition(abs(DisplayCurrency.aud.convertFromUSD(1) - (1.6428 / 1.1405)) < 0.0000001)
+
+        let unknownRoot = root.appendingPathComponent("unknown", isDirectory: true)
+        try FileManager.default.createDirectory(at: unknownRoot, withIntermediateDirectories: true)
+        try Data((event(at: 0, input: 10, cached: 0, output: 2, total: 12) + "\n").utf8)
+            .write(to: unknownRoot.appendingPathComponent("rollout-unknown.jsonl"))
+        let unknown = try await LocalActivityScanner(roots: [unknownRoot]).scan(days: 1)
+        precondition(unknown.models.first?.model == "unknown")
 
         let invalidRoot = root.appendingPathComponent("invalid", isDirectory: true)
         try FileManager.default.createDirectory(at: invalidRoot, withIntermediateDirectories: true)

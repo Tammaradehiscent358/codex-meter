@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 — 2026-07-15
+
+- Added local token attribution by the model recorded for each Codex turn.
+- Added model-by-model token totals, shares and API-equivalent estimates in the popover and CLI.
+- Added persistent USD, AUD and EUR display currencies plus CLI exchange-rate overrides.
+- Added automatic standard pricing for locally observed GPT-5.4, GPT-5.5 and GPT-5.6 model families from official OpenAI model pages.
+- Added explicit price-source dating, unknown-model handling and custom fallback rates.
+- Bumped history JSON to schema version 2 with structured pricing metadata.
+- Expanded model-switch, duplicate-log, counter-reset, unknown-model and pricing coverage.
+
 ## 1.1.0 — 2026-07-15
 
 - Added privacy-safe seven-day token activity history from local Codex session logs.

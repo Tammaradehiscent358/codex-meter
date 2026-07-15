@@ -39,7 +39,9 @@ Alert thresholds, menu-bar modes, history charts, cost rates and CLI automation 
 - Warns you when remaining usage drops below 10%, 20%, or 30%.
 - Detects stale or unavailable data instead of leaving a misleading old number visible.
 - Builds a seven-day token activity chart from aggregate events in local Codex session logs.
-- Calculates an optional API-equivalent cost estimate using rates you enter yourself.
+- Breaks local usage down by the actual model recorded for each Codex turn.
+- Automatically calculates an API-equivalent estimate with bundled official OpenAI standard prices.
+- Displays estimates in USD, AUD or EUR with a dated local ECB reference-rate snapshot.
 - Switches between icon + percentage, percentage-only, icon-only and activity-chart menu-bar modes.
 - Includes a universal `codex-meter` CLI with stable text/JSON output and threshold exit codes.
 - Supports launch at login without adding a Dock icon.
@@ -74,7 +76,7 @@ This app has one job and does not need your data for anything else.
 - No copied or stored Codex credentials
 - No uploaded session history
 
-Codex Meter starts the local `codex app-server` process and calls its read-only `account/rateLimits/read` method. For history, it prefilters candidate `token_count` lines from local rollout logs, then a narrow decoder retains only timestamps and cumulative numeric totals; prompts, responses and tool payload fields are ignored. It never reads `~/.codex/auth.json` and never calls the rate-limit reset action. See [Privacy](docs/privacy.md) and [Architecture](docs/architecture.md) for the full data flow.
+Codex Meter starts the local `codex app-server` process and calls its read-only `account/rateLimits/read` method. For history, it prefilters `turn_context` and `token_count` lines from local rollout logs, then a narrow decoder retains only model IDs, timestamps and cumulative numeric totals; prompts, responses and tool payload fields are ignored. It never reads `~/.codex/auth.json` and never calls the rate-limit reset action. See [Privacy](docs/privacy.md) and [Architecture](docs/architecture.md) for the full data flow.
 
 ## CLI and scripting
 
@@ -90,9 +92,12 @@ codex-meter status --threshold 20
 
 # Seven days of local token activity
 codex-meter history --days 7 --json
+
+# Show the model breakdown and estimates in Australian dollars
+codex-meter history --days 7 --currency AUD
 ```
 
-Cost estimates use optional user-supplied USD-per-million-token rates:
+Known models are priced automatically using a bundled snapshot of official standard API rates. Optional flags provide a fallback for unknown future models:
 
 ```sh
 codex-meter history --days 30 \
@@ -101,7 +106,7 @@ codex-meter history --days 30 \
   --output-rate 8.00
 ```
 
-The result is labelled **API-equivalent estimate**. It is not presented as ChatGPT subscription spend. See the full [CLI reference](docs/cli.md).
+The result includes each model's token total, share, pricing status and estimate. USD is the base price; AUD and EUR conversion uses a dated [European Central Bank reference-rate snapshot](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html). It is labelled **API-equivalent estimate**—not ChatGPT subscription spend. The bundled price snapshot is dated and linked to the [official OpenAI model catalogue](https://developers.openai.com/api/docs/models); long-context, regional, priority, batch, flex and tool-call adjustments are not inferred from local aggregate logs. See the full [CLI reference](docs/cli.md).
 
 ## Build it yourself
 

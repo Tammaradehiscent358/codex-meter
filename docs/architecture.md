@@ -15,13 +15,17 @@ The app intentionally does not consume rate-limit reset credits or expose any wr
 
 ## Local activity
 
-The scanner discovers recent `.jsonl` files under `~/.codex/sessions` and `~/.codex/archived_sessions`. It uses local `/usr/bin/grep` substring prefiltering before strict event-type decoding. Candidate lines briefly enter process memory; only timestamps and numeric cumulative totals are retained. Per-rollout non-negative deltas ignore repeated counters, handle resets and deduplicate archived copies through stable rollout identity plus cumulative fingerprints.
+The scanner discovers recent `.jsonl` files under `~/.codex/sessions` and `~/.codex/archived_sessions`. It uses local `/usr/bin/grep` prefiltering before strict decoding of only `turn_context` and `token_count` records. Candidate lines briefly enter process memory; only the latest bounded model ID, timestamps and numeric cumulative totals are retained. Each positive delta is attributed to the latest preceding model in physical record order. Per-rollout non-negative deltas ignore repeated counters, handle resets and deduplicate archived copies through stable rollout identity plus cumulative fingerprints.
 
 The first seven-day scan is bounded to recently modified logs. Results are cached in memory and refreshed every ten minutes, while quota checks remain on a separate two-minute schedule. No helper daemon remains running between scans.
 
 ## Cost estimates
 
-Cached input is a subset of input, so estimates price non-cached input as `input - cached`, then apply the user-owned input, cached-input and output rates. Reasoning output is not added again because it is contained in output totals. The UI always calls the result an API-equivalent estimate.
+`OpenAIPriceCatalog` is a dated, inspectable snapshot of standard per-million-token prices from official OpenAI model pages. Matching is exact by model ID; unknown models remain visibly unpriced unless the user supplies fallback rates. There is no runtime pricing request or external dependency.
+
+`DisplayCurrency` converts the USD base estimate to USD, AUD or EUR using a dated ECB reference-rate snapshot. The selected app currency is a local preference; the CLI can optionally override the USD-to-selected-currency rate. No live FX request runs in the app.
+
+Cached input is a subset of input, so estimates price non-cached input as `input - cached`, then apply model-specific input, cached-input and output rates. Reasoning output is not added again because it is contained in output totals. Aggregate logs cannot reliably reveal request-level pricing adjustments such as long context, so the UI always calls the result an API-equivalent estimate rather than a bill.
 
 ## Distribution
 
