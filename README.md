@@ -1,17 +1,33 @@
-# Codex Meter
+<p align="center">
+  <img src="docs/images/hero.svg" alt="Codex Meter — know what's left and what used it" width="100%">
+</p>
 
-**Your Codex limits, reset times and local activity — without another dashboard, account or tracking service.**
+<h1 align="center">Codex Meter</h1>
 
-[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple)](https://github.com/TheJhyeFactor/codex-meter/releases/latest)
-[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](https://www.swift.org/)
-[![MIT License](https://img.shields.io/badge/license-MIT-2563EB)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/TheJhyeFactor/codex-meter?display_name=tag&sort=semver)](https://github.com/TheJhyeFactor/codex-meter/releases/latest)
+<p align="center"><strong>Your Codex limits, reset times, model usage and local cost estimate—right in the macOS menu bar.</strong></p>
 
-Codex Meter is a free, open-source macOS menu bar app that shows how much Codex usage you have left, when it resets and how your local activity is trending.
+<p align="center">No extra account. No analytics. No Electron. Just one small native Mac app doing one useful job.</p>
+
+<p align="center">
+  <a href="https://github.com/TheJhyeFactor/codex-meter/releases/latest"><img src="https://img.shields.io/badge/macOS-13%2B-17181B?logo=apple" alt="macOS 13+"></a>
+  <a href="https://www.swift.org/"><img src="https://img.shields.io/badge/Swift-6-17181B?logo=swift&logoColor=white" alt="Swift 6"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-17181B" alt="MIT License"></a>
+  <a href="https://github.com/TheJhyeFactor/codex-meter/releases/latest"><img src="https://img.shields.io/github/v/release/TheJhyeFactor/codex-meter?display_name=tag&sort=semver&color=087FF5" alt="Latest release"></a>
+</p>
+
+Codex Meter is a free, open-source macOS menu bar app that shows how much Codex usage you have left, when it resets, which models used it, and what that activity would cost at standard API rates.
 
 I built this because I wanted one simple answer sitting in the menu bar: **how much Codex do I have left?** I did not want fake estimates, a web account, an Electron app or another service collecting usage data.
 
-![Codex Meter showing the weekly Codex usage remaining and reset time](docs/images/codex-meter.png)
+> Cost is always labelled as an **API-equivalent estimate**. It is not presented as your ChatGPT subscription bill.
+
+## At a glance
+
+| Quota | Local insight | Cost | Automation |
+| --- | --- | --- | --- |
+| Remaining percentage | Seven-day native chart | Official per-model rates | Universal CLI |
+| Exact reset time | Model-by-model usage | USD, AUD or EUR | JSON output |
+| Honest stale/error state | Prompts stay ignored | Unknown models stay unpriced | Threshold exit codes |
 
 ## Why Codex Meter is different
 
