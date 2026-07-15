@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Parser checks and debug build
         env:
           SKIP_LIVE_CODEX_CHECK: "1"
