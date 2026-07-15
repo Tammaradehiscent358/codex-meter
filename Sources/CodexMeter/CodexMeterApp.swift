@@ -60,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _, _, _, _ in self?.updateStatusItem() }
             .store(in: &cancellables)
+        store.$currency
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateStatusItem() }
+            .store(in: &cancellables)
         updateStatusItem()
     }
 
@@ -93,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             switch store.displayMode {
             case .iconAndPercentage:
                 button.image = NSImage(systemSymbolName: "gauge", accessibilityDescription: "Codex usage")
-                button.title = "\(remaining)%"
+                button.title = store.totalSavings > 0 ? "\(remaining)% · \(store.currency.code)\(Int(store.totalSavings))" : "\(remaining)%"
             case .percentage:
                 button.image = nil
                 button.title = "\(remaining)%"
@@ -107,7 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     : activityImage(from: days)
                 button.title = ""
             }
-            button.toolTip = "Codex: \(remaining)% remaining in the tightest usage window"
+            let savingsText = store.totalSavings > 0 ? " Estimated savings: \(store.currency.code) \(Int(store.totalSavings))." : ""
+            button.toolTip = "Codex: \(remaining)% remaining in the tightest usage window.\(savingsText)"
         } else {
             button.image = NSImage(systemSymbolName: "exclamationmark.circle", accessibilityDescription: "Codex usage unavailable")
             button.title = "—"

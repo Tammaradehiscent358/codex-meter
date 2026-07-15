@@ -58,9 +58,12 @@ Alert thresholds, menu-bar modes, history charts, cost rates and CLI automation 
 - Breaks local usage down by the actual model recorded for each Codex turn.
 - Automatically calculates an API-equivalent estimate with bundled official OpenAI standard prices.
 - Displays estimates in USD, AUD or EUR with a dated local ECB reference-rate snapshot.
+- Switches between isolated Codex account profiles without exposing credentials.
+- Celebrates savings, token milestones and banked resets, while calling out low usage clearly.
 - Switches between icon + percentage, percentage-only, icon-only and activity-chart menu-bar modes.
 - Includes a universal `codex-meter` CLI with stable text/JSON output and threshold exit codes.
 - Supports launch at login without adding a Dock icon.
+- Keeps usage windows, activity, accounts and settings collapsible so the popover stays calm.
 - Works natively on Apple silicon and Intel Macs.
 
 ## Download and install

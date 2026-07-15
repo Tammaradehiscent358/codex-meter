@@ -1,6 +1,7 @@
 import Foundation
 
 public actor CodexAppServerClient {
+    private let codexHome: URL?
     private var process: Process?
     private var input: FileHandle?
     private var readTask: Task<Void, Never>?
@@ -22,12 +23,28 @@ public actor CodexAppServerClient {
         ].compactMap { $0 }
     }
 
+    public static func locateExecutable() -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            ProcessInfo.processInfo.environment["CODEX_PATH"],
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex",
+            "\(home)/.local/bin/codex",
+            "\(home)/.npm-global/bin/codex",
+            "\(home)/.volta/bin/codex"
+        ].compactMap { $0 }
+        return candidates.first(where: FileManager.default.isExecutableFile(atPath:)).map(URL.init(fileURLWithPath:))
+    }
+
     deinit {
         readTask?.cancel()
         process?.terminate()
     }
 
-    public init() {}
+    public init(codexHome: URL? = nil) {
+        self.codexHome = codexHome
+    }
 
     public func readRateLimits() async throws -> RateLimitPayload {
         if process?.isRunning != true { try start() }
@@ -78,6 +95,11 @@ public actor CodexAppServerClient {
         process.standardOutput = stdout
         process.standardInput = stdin
         process.standardError = FileHandle.nullDevice
+        if let codexHome {
+            var environment = ProcessInfo.processInfo.environment
+            environment["CODEX_HOME"] = codexHome.path
+            process.environment = environment
+        }
 
         do { try process.run() } catch { throw CodexClientError.launch(error.localizedDescription) }
 

@@ -9,6 +9,8 @@ Codex Meter is a SwiftUI/AppKit status-bar application with six small layers:
 5. `LocalActivityScanner` filters aggregate-only token events from local rollout logs, deduplicates them and produces daily buckets.
 6. `CodexMeterCLI` exposes stable status/history DTOs for local scripts without importing AppKit.
 
+`UsageStore` can select an isolated account profile. Each profile is a Codex-owned `CODEX_HOME` directory, and the client starts `codex app-server` with that environment only. Adding a profile invokes Codex's supported device-auth login flow; Codex Meter never inspects the profile's credentials.
+
 The client performs the required `initialize` handshake before calling `account/rateLimits/read`. It prefers the `codex` entry in the multi-bucket response and falls back to the backward-compatible single-bucket response. Percentages are clamped to 0–100, and the menu bar displays the lowest remaining percentage across returned windows.
 
 The app intentionally does not consume rate-limit reset credits or expose any write-capable Codex method.
@@ -24,6 +26,8 @@ The first seven-day scan is bounded to recently modified logs. Results are cache
 `OpenAIPriceCatalog` is a dated, inspectable snapshot of standard per-million-token prices from official OpenAI model pages. Matching is exact by model ID; unknown models remain visibly unpriced unless the user supplies fallback rates. There is no runtime pricing request or external dependency.
 
 `DisplayCurrency` converts the USD base estimate to USD, AUD or EUR using a dated ECB reference-rate snapshot. The selected app currency is a local preference; the CLI can optionally override the USD-to-selected-currency rate. No live FX request runs in the app.
+
+Savings are intentionally an estimate: each known model's API-equivalent cost is compared with the same token usage priced as GPT-5.6 Sol. Milestone banners are local-only UI state and are triggered at savings, token, low-usage and reset transitions.
 
 Cached input is a subset of input, so estimates price non-cached input as `input - cached`, then apply model-specific input, cached-input and output rates. Reasoning output is not added again because it is contained in output totals. Aggregate logs cannot reliably reveal request-level pricing adjustments such as long context, so the UI always calls the result an API-equivalent estimate rather than a bill.
 

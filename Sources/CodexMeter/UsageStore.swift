@@ -21,6 +21,21 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+struct AccountProfile: Codable, Equatable, Identifiable {
+    let id: UUID
+    var name: String
+    let homePath: String?
+
+    var homeURL: URL? { homePath.map(URL.init(fileURLWithPath:)) }
+}
+
+struct Celebration: Equatable, Identifiable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+    let symbol: String
+}
+
 @MainActor
 final class UsageStore: ObservableObject {
     @Published private(set) var payload: RateLimitPayload?
@@ -41,8 +56,13 @@ final class UsageStore: ObservableObject {
     @Published var currency: DisplayCurrency {
         didSet { UserDefaults.standard.set(currency.rawValue, forKey: Self.currencyKey) }
     }
+    @Published private(set) var accounts: [AccountProfile]
+    @Published var activeAccountID: UUID {
+        didSet { UserDefaults.standard.set(activeAccountID.uuidString, forKey: Self.activeAccountKey) }
+    }
+    @Published private(set) var celebration: Celebration?
 
-    private let client = CodexAppServerClient()
+    private var client: CodexAppServerClient
     private let activityScanner = LocalActivityScanner()
     private let previewMode: Bool
     private var pollingTask: Task<Void, Never>?
@@ -54,9 +74,32 @@ final class UsageStore: ObservableObject {
     private static let cachedInputRateKey = "costCachedInputRate"
     private static let outputRateKey = "costOutputRate"
     private static let currencyKey = "displayCurrency"
+    private static let accountsKey = "accountProfiles"
+    private static let activeAccountKey = "activeAccountID"
+    private static let savingsMilestoneKey = "lastSavingsMilestoneUSD"
+    private static let tokenMilestoneKey = "lastTokenMilestone"
+    private static let resetMilestoneKey = "lastBankedReset"
 
     init(previewMode: Bool = false) {
+        let defaultAccount = AccountProfile(id: UUID(), name: "Default", homePath: nil)
+        let loadedAccounts: [AccountProfile]
+        if let data = UserDefaults.standard.data(forKey: Self.accountsKey),
+           let decoded = try? JSONDecoder().decode([AccountProfile].self, from: data), !decoded.isEmpty {
+            loadedAccounts = decoded
+        } else {
+            loadedAccounts = [defaultAccount]
+        }
+        let savedAccount = UserDefaults.standard.string(forKey: Self.activeAccountKey).flatMap(UUID.init(uuidString:))
+        let chosenAccountID = savedAccount.flatMap { candidate in
+            loadedAccounts.contains(where: { $0.id == candidate }) ? candidate : nil
+        } ?? loadedAccounts[0].id
         self.previewMode = previewMode
+        self.accounts = loadedAccounts
+        self.activeAccountID = chosenAccountID
+        self.client = CodexAppServerClient(codexHome: loadedAccounts.first(where: { $0.id == chosenAccountID })?.homeURL)
+        if UserDefaults.standard.data(forKey: Self.accountsKey) == nil {
+            UserDefaults.standard.set(try? JSONEncoder().encode(loadedAccounts), forKey: Self.accountsKey)
+        }
         let saved = UserDefaults.standard.integer(forKey: Self.thresholdKey)
         alertThreshold = saved == 0 ? 20 : saved
         displayMode = MenuBarDisplayMode(rawValue: UserDefaults.standard.string(forKey: Self.displayModeKey) ?? "") ?? .iconAndPercentage
@@ -97,6 +140,16 @@ final class UsageStore: ObservableObject {
     }
 
     var windows: [RateLimitWindow] { payload?.snapshot.windows ?? [] }
+    var activeAccountName: String { accounts.first(where: { $0.id == activeAccountID })?.name ?? "Default" }
+    var totalSavingsUSD: Double {
+        guard let activity else { return 0 }
+        guard let baseline = OpenAIPriceCatalog.price(for: "gpt-5.6-sol") else { return 0 }
+        return activity.models.reduce(0) { total, item in
+            guard let actual = OpenAIPriceCatalog.price(for: item.model) else { return total }
+            return total + max(0, baseline.estimate(item.usage) - actual.estimate(item.usage))
+        }
+    }
+    var totalSavings: Double { currency.convertFromUSD(totalSavingsUSD) }
     var menuBarRemaining: Int? {
         guard errorMessage == nil, !isStale else { return nil }
         return payload?.snapshot.mostConstrainedRemaining
@@ -136,8 +189,10 @@ final class UsageStore: ObservableObject {
 
     func refreshActivity() async {
         do {
+            let previous = activity
             activity = try await activityScanner.scan(days: 7)
             activityError = nil
+            detectActivityMilestones(previous: previous, current: activity)
         } catch {
             activity = nil
             activityError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -150,9 +205,11 @@ final class UsageStore: ObservableObject {
         defer { isRefreshing = false }
         do {
             let newPayload = try await client.readRateLimits()
+            let previous = payload
             payload = newPayload
             errorMessage = newPayload.snapshot.windows.isEmpty ? "No Codex rate-limit windows were returned for this account." : nil
             await notifyIfNeeded(newPayload)
+            detectResetMilestone(previous: previous, current: newPayload)
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             await client.stop()
@@ -176,6 +233,107 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    func switchAccount(to id: UUID) {
+        guard accounts.contains(where: { $0.id == id }), id != activeAccountID else { return }
+        pollingTask?.cancel()
+        activityPollingTask?.cancel()
+        Task {
+            await client.stop()
+            let profile = accounts.first(where: { $0.id == id })
+            activeAccountID = id
+            client = CodexAppServerClient(codexHome: profile?.homeURL)
+            payload = nil
+            activity = nil
+            start()
+        }
+    }
+
+    func addAccount() {
+        let alert = NSAlert()
+        alert.messageText = "Add Codex account"
+        alert.informativeText = "Choose a label. Codex Meter will open Codex's supported device login flow for a private profile on this Mac."
+        let field = NSTextField(string: "Work")
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let id = UUID()
+        let home = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex-meter", isDirectory: true)
+            .appendingPathComponent("accounts", isDirectory: true)
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let profile = AccountProfile(id: id, name: name, homePath: home.path)
+            accounts.append(profile)
+            persistAccounts()
+            switchAccount(to: id)
+            startLogin(for: profile)
+        } catch {
+            errorMessage = "The account profile could not be created: \(error.localizedDescription)"
+        }
+    }
+
+    private func startLogin(for profile: AccountProfile) {
+        guard let executable = CodexAppServerClient.locateExecutable(), let home = profile.homeURL else { return }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["login", "--device-auth"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = home.path
+        process.environment = environment
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { errorMessage = "Codex login could not be started: \(error.localizedDescription)" }
+    }
+
+    private func persistAccounts() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(accounts), forKey: Self.accountsKey)
+    }
+
+    private func detectActivityMilestones(previous: LocalActivitySnapshot?, current: LocalActivitySnapshot?) {
+        guard !previewMode, previous != nil, let current else { return }
+        let newSavings = current.models.reduce(0) { total, item in savingsUSD(for: item) + total }
+        let newTokens = current.total.totalTokens
+        let savingsStep = max(0, Int(newSavings / 50))
+        let savedStep = UserDefaults.standard.integer(forKey: Self.savingsMilestoneKey)
+        if savingsStep > savedStep, savingsStep > 0 {
+            UserDefaults.standard.set(savingsStep, forKey: Self.savingsMilestoneKey)
+            celebration = Celebration(title: "\(currency.code) \(Int(currency.convertFromUSD(newSavings))) saved", subtitle: "Estimated savings versus GPT-5.6 Sol", symbol: "sparkles")
+            dismissCelebration()
+            return
+        }
+        let tokenStep = max(0, Int(newTokens / 1_000_000))
+        let oldTokenStep = UserDefaults.standard.integer(forKey: Self.tokenMilestoneKey)
+        if tokenStep >= 1, tokenStep > oldTokenStep, (tokenStep % 10 == 0 || oldTokenStep == 0) {
+            UserDefaults.standard.set(tokenStep, forKey: Self.tokenMilestoneKey)
+            celebration = Celebration(title: "Token milestone", subtitle: "You have used \(tokenStep)M local tokens", symbol: "bolt.fill")
+            dismissCelebration()
+        }
+    }
+
+    private func savingsUSD(for item: ModelTokenUsage) -> Double {
+        guard let baseline = OpenAIPriceCatalog.price(for: "gpt-5.6-sol"), let actual = OpenAIPriceCatalog.price(for: item.model) else { return 0 }
+        return max(0, baseline.estimate(item.usage) - actual.estimate(item.usage))
+    }
+
+    private func detectResetMilestone(previous: RateLimitPayload?, current: RateLimitPayload) {
+        guard !previewMode, let old = previous?.snapshot.windows.first?.resetsAt, let new = current.snapshot.windows.first?.resetsAt,
+              old != new else { return }
+        let key = "\(new.timeIntervalSince1970)"
+        guard UserDefaults.standard.string(forKey: Self.resetMilestoneKey) != key else { return }
+        UserDefaults.standard.set(key, forKey: Self.resetMilestoneKey)
+        celebration = Celebration(title: "Reset banked", subtitle: "A fresh Codex allowance is ready", symbol: "arrow.counterclockwise.circle.fill")
+        dismissCelebration()
+    }
+
+    private func dismissCelebration() {
+        Task { try? await Task.sleep(for: .seconds(4)); celebration = nil }
+    }
+
     private func notifyIfNeeded(_ payload: RateLimitPayload) async {
         guard let constrained = payload.snapshot.windows.min(by: { $0.remainingPercent < $1.remainingPercent }),
               constrained.remainingPercent <= alertThreshold else { return }
@@ -184,6 +342,11 @@ final class UsageStore: ObservableObject {
         let resetComponent = constrained.resetsAt.map { Int($0.timeIntervalSince1970) } ?? fallbackBucket
         let resetID = "\(constrained.durationMinutes ?? 0)-\(resetComponent)-\(alertThreshold)"
         guard UserDefaults.standard.string(forKey: Self.notifiedResetKey) != resetID else { return }
+
+        if !previewMode {
+            celebration = Celebration(title: "Usage running low", subtitle: "\(constrained.remainingPercent)% remains in the tightest window", symbol: "exclamationmark.triangle.fill")
+            dismissCelebration()
+        }
 
         let center = UNUserNotificationCenter.current()
         let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false

@@ -10,6 +10,12 @@
 - Bumped history JSON to schema version 2 with structured pricing metadata.
 - Expanded model-switch, duplicate-log, counter-reset, unknown-model and pricing coverage.
 
+## 1.3.0 — 2026-07-15
+
+- Added isolated `CODEX_HOME` account profiles with supported device-login flow and one-click hot swap.
+- Added collapsible usage, local-activity and settings sections.
+- Added menu-bar savings total and in-app milestone banners for savings, tokens, low usage and banked resets.
+
 ## 1.1.0 — 2026-07-15
 
 - Added privacy-safe seven-day token activity history from local Codex session logs.

@@ -5,15 +5,27 @@ import SwiftUI
 struct MeterView: View {
     @ObservedObject var store: UsageStore
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("usageWindowsExpanded") private var usageWindowsExpanded = true
+    @AppStorage("localActivityExpanded") private var localActivityExpanded = true
+    @AppStorage("settingsExpanded") private var settingsExpanded = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-            Divider()
-            footer
+        ZStack(alignment: .top) {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                content
+                Divider()
+                settings
+            }
+            if let celebration = store.celebration {
+                CelebrationBanner(celebration: celebration)
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(2)
+            }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: store.celebration)
         .frame(width: 348)
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -61,10 +73,21 @@ struct MeterView: View {
     @ViewBuilder
     private var content: some View {
         VStack(spacing: 0) {
-            quotaContent
+            DisclosureGroup(isExpanded: $usageWindowsExpanded) {
+                quotaContent
+            } label: {
+                SectionLabel(title: "Usage windows", detail: store.activeAccountName)
+            }
+            .padding(.horizontal, 16)
             if let activity = store.activity {
                 Divider()
-                LocalActivityView(activity: activity, rates: store.costRates, currency: store.currency)
+                DisclosureGroup(isExpanded: $localActivityExpanded) {
+                    LocalActivityView(activity: activity, rates: store.costRates, currency: store.currency, totalSavings: store.totalSavings)
+                        .padding(.horizontal, -16)
+                } label: {
+                    SectionLabel(title: "Local activity", detail: "\(compactTokens(activity.total.totalTokens)) tokens")
+                }
+                .padding(16)
             } else if let activityError = store.activityError {
                 Divider()
                 HStack(alignment: .top, spacing: 9) {
@@ -117,8 +140,40 @@ struct MeterView: View {
         }
     }
 
+    private var settings: some View {
+        DisclosureGroup(isExpanded: $settingsExpanded) {
+            footer
+        } label: {
+            SectionLabel(title: "Settings", detail: "Display, alerts and accounts")
+        }
+        .padding(16)
+    }
+
     private var footer: some View {
         VStack(spacing: 10) {
+            HStack {
+                Text("Account")
+                    .font(.system(size: 12))
+                Spacer()
+                Picker("Account", selection: Binding(
+                    get: { store.activeAccountID },
+                    set: { store.switchAccount(to: $0) }
+                )) {
+                    ForEach(store.accounts) { account in
+                        Text(account.name).tag(account.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 132)
+                Button {
+                    store.addAccount()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .help("Add Codex account")
+                .accessibilityLabel("Add Codex account")
+            }
             HStack {
                 Text("Menu bar")
                     .font(.system(size: 12))
@@ -194,12 +249,59 @@ struct MeterView: View {
         }
         return "Signed in through the Codex app"
     }
+
+    private func compactTokens(_ value: Int64) -> String {
+        if value >= 1_000_000_000 { return String(format: "%.1fB", Double(value) / 1_000_000_000) }
+        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.1fK", Double(value) / 1_000) }
+        return "\(value)"
+    }
+}
+
+private struct SectionLabel: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack {
+            Text(title).font(.system(size: 12, weight: .medium))
+            Spacer()
+            Text(detail).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct CelebrationBanner: View {
+    let celebration: Celebration
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: celebration.symbol)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(celebration.title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(celebration.subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.35)))
+        .padding(.horizontal, 12)
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+    }
 }
 
 private struct LocalActivityView: View {
     let activity: LocalActivitySnapshot
     let rates: LocalCostRates
     let currency: DisplayCurrency
+    let totalSavings: Double
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -270,6 +372,11 @@ private struct LocalActivityView: View {
             Text("API prices checked 15 Jul 2026 · estimate only")
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
+            if totalSavings > 0 {
+                Text("Estimated savings vs GPT-5.6 Sol: \(formatted(totalSavings))")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
         }
         .padding(16)
     }
